@@ -22,6 +22,8 @@ export const VideoPlayer = ({ matchId, matchTitle }: VideoPlayerProps) => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [streamUrl, setStreamUrl] = useState<string>("");
+  const [alternateStreams, setAlternateStreams] = useState<string[]>([]);
+  const [currentStreamIndex, setCurrentStreamIndex] = useState(0);
   const [showExtensionOption, setShowExtensionOption] = useState(false);
   
   // Video control states
@@ -126,16 +128,49 @@ export const VideoPlayer = ({ matchId, matchTitle }: VideoPlayerProps) => {
   useEffect(() => {
     const fetchStreamUrl = async () => {
       try {
-        const url = await FancodeService.fetchMatchStreamUrl(matchId);
-        console.log('Fetched stream URL:', url);
-        if (url) {
-          setStreamUrl(url);
+        const match = await FancodeService.getMatchById(matchId);
+        console.log('Fetched match data:', match);
+        
+        if (match) {
+          // Collect all available stream URLs for fallback
+          const streamUrls: string[] = [];
+          
+          if (match.streamUrl) {
+            streamUrls.push(match.streamUrl);
+          }
+          
+          if (match.alternateStreams) {
+            if (match.alternateStreams.dai) {
+              streamUrls.push(match.alternateStreams.dai);
+            }
+            if (match.alternateStreams.cloudfront) {
+              streamUrls.push(match.alternateStreams.cloudfront);
+            }
+            if (match.alternateStreams.fancode) {
+              streamUrls.push(match.alternateStreams.fancode);
+            }
+          }
+          
+          // Convert to proxy URLs
+          const proxyUrls = streamUrls
+            .map(url => FancodeService.convertToProxyUrl ? FancodeService.convertToProxyUrl(url) : null)
+            .filter(Boolean) as string[];
+          
+          console.log('Available stream URLs:', proxyUrls);
+          setAlternateStreams(proxyUrls);
+          
+          if (proxyUrls.length > 0) {
+            setStreamUrl(proxyUrls[0]);
+            setCurrentStreamIndex(0);
+          } else {
+            setError('No valid stream URLs found');
+          }
         } else {
-          setError('Stream URL not found');
+          setError('Match not found');
         }
       } catch (err) {
-        console.error('Error fetching stream URL:', err);
-        setError('Failed to get stream URL');
+        console.error('Error fetching stream data:', err);
+        setError('Failed to get stream data');
       }
     };
     fetchStreamUrl();
@@ -198,8 +233,16 @@ export const VideoPlayer = ({ matchId, matchTitle }: VideoPlayerProps) => {
 
       player.addEventListener('error', (event: any) => {
         console.error('DASH Player Error:', event.detail);
-        setError('Stream error occurred. Try the extension player below.');
-        setShowExtensionOption(true);
+        // Try next stream if available
+        if (currentStreamIndex < alternateStreams.length - 1) {
+          const nextIndex = currentStreamIndex + 1;
+          console.log(`DASH error - trying alternate stream ${nextIndex + 1}/${alternateStreams.length}`);
+          setCurrentStreamIndex(nextIndex);
+          setStreamUrl(alternateStreams[nextIndex]);
+        } else {
+          setError('All streams failed. Try the extension player below.');
+          setShowExtensionOption(true);
+        }
       });
 
       player.addEventListener('buffering', (event: any) => {
@@ -282,14 +325,22 @@ export const VideoPlayer = ({ matchId, matchTitle }: VideoPlayerProps) => {
           }
         });
 
-        // Error handling with automatic recovery
+        // Error handling with automatic recovery and fallback
         hls.on(window.Hls.Events.ERROR, (event, data) => {
           console.warn('HLS Error:', data);
           if (data.fatal) {
             switch (data.type) {
               case window.Hls.ErrorTypes.NETWORK_ERROR:
                 console.log('Network error, trying to recover...');
-                hls.startLoad();
+                // Try next stream if available
+                if (currentStreamIndex < alternateStreams.length - 1) {
+                  const nextIndex = currentStreamIndex + 1;
+                  console.log(`Trying alternate stream ${nextIndex + 1}/${alternateStreams.length}`);
+                  setCurrentStreamIndex(nextIndex);
+                  setStreamUrl(alternateStreams[nextIndex]);
+                } else {
+                  hls.startLoad();
+                }
                 break;
               case window.Hls.ErrorTypes.MEDIA_ERROR:
                 console.log('Media error, trying to recover...');
@@ -297,8 +348,16 @@ export const VideoPlayer = ({ matchId, matchTitle }: VideoPlayerProps) => {
                 break;
               default:
                 console.log('Fatal error, cannot recover');
-                setError('Stream error occurred. Try the extension player below.');
-                setShowExtensionOption(true);
+                // Try next stream if available
+                if (currentStreamIndex < alternateStreams.length - 1) {
+                  const nextIndex = currentStreamIndex + 1;
+                  console.log(`Trying alternate stream ${nextIndex + 1}/${alternateStreams.length}`);
+                  setCurrentStreamIndex(nextIndex);
+                  setStreamUrl(alternateStreams[nextIndex]);
+                } else {
+                  setError('All streams failed. Try the extension player below.');
+                  setShowExtensionOption(true);
+                }
                 break;
             }
           }
@@ -349,8 +408,16 @@ export const VideoPlayer = ({ matchId, matchTitle }: VideoPlayerProps) => {
     video.addEventListener('canplay', () => setIsLoading(false));
     video.addEventListener('error', (e) => {
       console.error('Native Player Error:', e);
-      setError('Failed to load stream. Please try refreshing.');
-      setIsLoading(false);
+      // Try next stream if available
+      if (currentStreamIndex < alternateStreams.length - 1) {
+        const nextIndex = currentStreamIndex + 1;
+        console.log(`Native player error - trying alternate stream ${nextIndex + 1}/${alternateStreams.length}`);
+        setCurrentStreamIndex(nextIndex);
+        setStreamUrl(alternateStreams[nextIndex]);
+      } else {
+        setError('All streams failed. Please try refreshing.');
+        setIsLoading(false);
+      }
     });
 
     video.load();
@@ -525,7 +592,43 @@ export const VideoPlayer = ({ matchId, matchTitle }: VideoPlayerProps) => {
           <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">
             <div className="text-center p-4">
               <p className="text-red-400 text-sm mb-2">Stream Error</p>
-              <p className="text-white/60 text-xs">{error}</p>
+              <p className="text-white/60 text-xs mb-4">{error}</p>
+              
+              {/* Stream Switcher */}
+              {alternateStreams.length > 1 && (
+                <div className="mb-4">
+                  <p className="text-white text-xs mb-2">Try another stream:</p>
+                  <div className="flex gap-2 justify-center">
+                    {alternateStreams.map((_, index) => (
+                      <button
+                        key={index}
+                        onClick={() => {
+                          setCurrentStreamIndex(index);
+                          setStreamUrl(alternateStreams[index]);
+                          setError(null);
+                        }}
+                        className={`px-3 py-1 text-xs rounded ${
+                          index === currentStreamIndex
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-gray-600 text-gray-300 hover:bg-gray-500'
+                        }`}
+                      >
+                        Stream {index + 1}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
+              {/* Extension Option */}
+              {showExtensionOption && (
+                <button
+                  onClick={openInExtension}
+                  className="px-4 py-2 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
+                >
+                  Open in Extension Player
+                </button>
+              )}
             </div>
           </div>
         )}

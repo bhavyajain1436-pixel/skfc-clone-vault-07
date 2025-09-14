@@ -19,6 +19,11 @@ interface FancodeMatch {
   sportIcon: string;
   status: 'live' | 'upcoming' | 'completed';
   streamUrl?: string;
+  alternateStreams?: {
+    dai?: string;
+    cloudfront?: string;
+    fancode?: string;
+  };
 }
 
 export class FancodeService {
@@ -140,12 +145,17 @@ export class FancodeService {
       const team1 = match.teams?.[0];
       const team2 = match.teams?.[1];
       
-      // Prioritize adfree streams over DAI streams for better compatibility
-      let streamUrl = match.adfree_stream || match.STREAMING_CDN?.fancode_cdn || match.STREAMING_CDN?.Primary_Playback_URL;
+      // Try multiple stream sources with DAI preferred for reliability
+      let streamUrl = match.dai_stream || match.STREAMING_CDN?.dai_google_cdn;
       
-      // Only use DAI as fallback if no other streams available
+      // Use adfree/CloudFront as fallback
       if (!streamUrl) {
-        streamUrl = match.dai_stream || match.STREAMING_CDN?.dai_google_cdn;
+        streamUrl = match.adfree_stream || match.STREAMING_CDN?.cloudfront_cdn || match.STREAMING_CDN?.Primary_Playback_URL;
+      }
+      
+      // Last resort - fancode CDN
+      if (!streamUrl) {
+        streamUrl = match.STREAMING_CDN?.fancode_cdn;
       }
       
       return {
@@ -166,7 +176,13 @@ export class FancodeService {
         buttonColor: this.getRandomButtonColor(),
         sportIcon: this.getSportIcon(match.category),
         status: this.mapGithubStatus(match.status),
-        streamUrl: streamUrl || undefined
+        streamUrl: streamUrl || undefined,
+        // Store multiple stream options for fallback
+        alternateStreams: {
+          dai: match.dai_stream || match.STREAMING_CDN?.dai_google_cdn,
+          cloudfront: match.adfree_stream || match.STREAMING_CDN?.cloudfront_cdn,
+          fancode: match.STREAMING_CDN?.fancode_cdn
+        }
       };
     });
   }
@@ -215,36 +231,73 @@ export class FancodeService {
       // First get the match data which contains the stream URL
       const match = await this.getMatchById(matchId);
       
-      if (match && match.streamUrl) {
-        // If it's already a proxied URL, return it directly
-        if (match.streamUrl.startsWith('/api/stream/')) {
-          return match.streamUrl;
+      if (match) {
+        // Try primary stream URL first
+        if (match.streamUrl) {
+          const proxyUrl = this.convertToProxyUrl(match.streamUrl);
+          if (proxyUrl) {
+            console.log('Using primary stream:', proxyUrl);
+            return proxyUrl;
+          }
         }
         
-        // If it's a direct URL, proxy it through our API
-        if (match.streamUrl.startsWith('http')) {
-          const urlObj = new URL(match.streamUrl);
-          // Handle Google DAI URLs specially
-          if (urlObj.hostname === 'dai.google.com') {
-            return `/api/stream/dai.google.com${urlObj.pathname}${urlObj.search || ''}`;
+        // Try alternate streams as fallbacks
+        if (match.alternateStreams) {
+          const alternates = [
+            match.alternateStreams.dai,
+            match.alternateStreams.cloudfront,
+            match.alternateStreams.fancode
+          ].filter(Boolean);
+          
+          for (const streamUrl of alternates) {
+            if (streamUrl) {
+              const proxyUrl = this.convertToProxyUrl(streamUrl);
+              if (proxyUrl) {
+                console.log('Using alternate stream:', proxyUrl);
+                return proxyUrl;
+              }
+            }
           }
-          // Handle fdlive fancode URLs specially
-          if (urlObj.hostname === 'in-mc-fdlive.fancode.com') {
-            return `/api/stream/fancode/fdlive${urlObj.pathname}${urlObj.search || ''}`;
-          }
-          // Handle other fancode URLs
-          if (urlObj.hostname.includes('fancode.com')) {
-            return `/api/stream/fancode${urlObj.pathname}${urlObj.search || ''}`;
-          }
-          // Handle other hosts (Sony, Akamai, etc.) - construct proper proxy URL
-          const pathAndQuery = urlObj.pathname + (urlObj.search || '');
-          return `/api/stream/${urlObj.hostname}${pathAndQuery}`;
         }
       }
       
       return null;
     } catch (error) {
       console.error('Error fetching stream URL:', error);
+      return null;
+    }
+  }
+
+  static convertToProxyUrl(streamUrl: string): string | null {
+    try {
+      // If it's already a proxied URL, return it directly
+      if (streamUrl.startsWith('/api/stream/')) {
+        return streamUrl;
+      }
+      
+      // If it's a direct URL, proxy it through our API
+      if (streamUrl.startsWith('http')) {
+        const urlObj = new URL(streamUrl);
+        // Handle Google DAI URLs specially
+        if (urlObj.hostname === 'dai.google.com') {
+          return `/api/stream/dai.google.com${urlObj.pathname}${urlObj.search || ''}`;
+        }
+        // Handle fdlive fancode URLs specially
+        if (urlObj.hostname === 'in-mc-fdlive.fancode.com') {
+          return `/api/stream/fancode/fdlive${urlObj.pathname}${urlObj.search || ''}`;
+        }
+        // Handle other fancode URLs
+        if (urlObj.hostname.includes('fancode.com')) {
+          return `/api/stream/fancode${urlObj.pathname}${urlObj.search || ''}`;
+        }
+        // Handle other hosts (Sony, Akamai, etc.) - construct proper proxy URL
+        const pathAndQuery = urlObj.pathname + (urlObj.search || '');
+        return `/api/stream/${urlObj.hostname}${pathAndQuery}`;
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('Error converting stream URL:', error);
       return null;
     }
   }
