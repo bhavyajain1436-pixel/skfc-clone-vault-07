@@ -23,7 +23,7 @@
           "value": "nosniff"
         },
         {
-          "key": "X-Frame-Options",
+          "key": "X-Frame-Options", 
           "value": "DENY"
         },
         {
@@ -32,16 +32,5 @@
         }
       ]
     }
-  ],
-  "functions": {
-    "functions/api/stream/[[path]].ts": {
-      "maxDuration": 30
-    },
-    "functions/api/fancode/[[path]].ts": {
-      "maxDuration": 30
-    },
-    "functions/api/crex/[[path]].ts": {
-      "maxDuration": 30
-    }
-  }
+  ]
 }
