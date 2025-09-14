@@ -1,0 +1,23 @@
+# Set correct MIME types for JavaScript modules
+/assets/*.js
+  Content-Type: text/javascript
+
+/assets/*.mjs
+  Content-Type: text/javascript
+
+# Set correct MIME types for other assets
+/assets/*.css
+  Content-Type: text/css
+
+/assets/*.woff2
+  Content-Type: font/woff2
+
+/assets/*.woff
+  Content-Type: font/woff
+
+# Security headers
+/*
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
